@@ -12,8 +12,8 @@ cask "devpack" do
   arch arm: "arm64", intel: "x64"
 
   version "0.0.4"
-  sha256 arm:   "5001da649e4b5471ae6b0455d624690e2f365c979727e541b8cd8ec16768bd8b",
-         intel: "adc8480dac838cd86892d1508f5c3d9c0a7196bea88c055297e968d494921f36"
+  sha256 arm:   "c73b9f46db8fc02585f2ff224724d5db64b743b880dbde2a93194239fd0142f6",
+         intel: "4297d83cf5bbf07bc1e640cadfafbbbcd8026338207c7b12758e4346ce6e1e76"
 
   url "https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-#{version}/foundry-devpack-osx-#{arch}.zip",
       verified: "github.com/microsoft/foundry-toolkit/"
