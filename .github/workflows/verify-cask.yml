@@ -53,18 +53,20 @@ jobs:
           command -v foundry-devpack
           foundry-devpack --help
 
-      # Real proof the binary is Developer-ID signed AND notarized (Gatekeeper online check),
-      # which is what makes the quarantined cask launch without a prompt.
-      - name: Verify code signature + notarization
+      # Authoritative signature check for a bare CLI binary. (Notarization itself was already
+      # exercised: the cask ran the QUARANTINED binary in postflight, which Gatekeeper would
+      # have blocked if it were not notarized.)
+      - name: Verify code signature
         run: |
           set -x
           bin="$(command -v foundry-devpack)"
           real="$(readlink "$bin" 2>/dev/null || echo "$bin")"
           echo "resolved binary: $real"
           codesign --verify --strict --verbose=2 "$real"
-          codesign -dvvv "$real" 2>&1 | grep -Ei 'Authority|TeamIdentifier|Identifier=' || true
-          # "accepted ... source=Notarized Developer ID" confirms notarization.
-          spctl -a -t exec -vv "$real"
+          codesign -dvvv "$real" 2>&1 | grep -Ei 'Authority|TeamIdentifier|Identifier='
+          # spctl -t exec assesses APP BUNDLES only; a bare CLI is reported "rejected (... does
+          # not seem to be an app)" even when validly signed + notarized, so this is informational.
+          spctl -a -t exec -vv "$real" || echo "(spctl -t exec is app-only; codesign above is authoritative for a bare CLI)"
 
       - name: Show installed prerequisites
         if: always()
