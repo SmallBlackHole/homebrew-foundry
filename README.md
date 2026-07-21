@@ -5,7 +5,7 @@ Homebrew tap for the **Foundry DevPack** installer.
 ## Install
 
 ```sh
-brew install --cask microsoft/foundry/devpack
+brew install --cask SmallBlackHole/foundry/devpack
 ```
 
 That single command:
@@ -21,7 +21,7 @@ even though Homebrew quarantines cask artifacts.
 ## Update
 
 ```sh
-brew upgrade --cask microsoft/foundry/devpack
+brew upgrade --cask SmallBlackHole/foundry/devpack
 ```
 
 ## Uninstall
