@@ -1,0 +1,80 @@
+name: Verify cask
+
+on:
+  push:
+    paths:
+      - "Casks/**"
+      - ".github/workflows/verify-cask.yml"
+  pull_request:
+    paths:
+      - "Casks/**"
+      - ".github/workflows/verify-cask.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.arch }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13   # Intel
+            arch: x64
+          - os: macos-14   # Apple Silicon
+            arch: arm64
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      # Authenticates the installer's GitHub calls (azd extension + skill) to avoid rate limits.
+      # The cask forwards this to the binary as GH_TOKEN.
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runner arch
+        run: uname -m
+
+      - name: Audit cask (informational)
+        continue-on-error: true
+        run: brew audit --cask ./Casks/devpack.rb
+
+      # Installs the cask exactly as a user would: applies quarantine, resolves the azure-cli
+      # dependency, and runs postflight (foundry-devpack --channel brew) to install azd + the
+      # azd Foundry extension + the skill. A non-zero postflight fails this step.
+      - name: Install cask
+        run: brew install --cask ./Casks/devpack.rb
+
+      - name: Verify foundry-devpack on PATH
+        run: |
+          set -x
+          command -v foundry-devpack
+          foundry-devpack --help
+
+      # Real proof the binary is Developer-ID signed AND notarized (Gatekeeper online check),
+      # which is what makes the quarantined cask launch without a prompt.
+      - name: Verify code signature + notarization
+        run: |
+          set -x
+          bin="$(command -v foundry-devpack)"
+          real="$(readlink "$bin" 2>/dev/null || echo "$bin")"
+          echo "resolved binary: $real"
+          codesign --verify --strict --verbose=2 "$real"
+          codesign -dvvv "$real" 2>&1 | grep -Ei 'Authority|TeamIdentifier|Identifier=' || true
+          # "accepted ... source=Notarized Developer ID" confirms notarization.
+          spctl -a -t exec -vv "$real"
+
+      - name: Show installed prerequisites
+        if: always()
+        run: |
+          command -v az && az version || echo "az not found"
+          command -v azd && azd version || echo "azd not found"
+          ls -la "$HOME/.agents/skills/microsoft-foundry" || echo "skill dir not found"
+
+      - name: Uninstall + zap
+        if: always()
+        run: brew uninstall --zap --cask ./Casks/devpack.rb || true
