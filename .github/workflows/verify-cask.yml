@@ -68,12 +68,22 @@ jobs:
           # not seem to be an app)" even when validly signed + notarized, so this is informational.
           spctl -a -t exec -vv "$real" || echo "(spctl -t exec is app-only; codesign above is authoritative for a bare CLI)"
 
-      - name: Show installed prerequisites
-        if: always()
+      # Assert every prerequisite the cask is supposed to leave behind (fails the job if any is
+      # missing). If the azd extension is absent it usually means postflight deferred it because
+      # azd wasn't on PATH yet -> the cask would then need a follow-up `foundry-devpack --ensure`.
+      - name: Verify prerequisites installed
         run: |
-          command -v az && az version || echo "az not found"
-          command -v azd && azd version || echo "azd not found"
-          ls -la "$HOME/.agents/skills/microsoft-foundry" || echo "skill dir not found"
+          set -euxo pipefail
+          # az — provided by the azure-cli Homebrew dependency
+          az version
+          # azd — installed by the binary during postflight
+          azd version
+          # azd Foundry extension (id: microsoft.foundry)
+          azd ext list --installed
+          azd ext list --installed | grep -qi 'microsoft\.foundry'
+          # skill — verify real content, not just the directory
+          test -f "$HOME/.agents/skills/microsoft-foundry/SKILL.md"
+          ls -la "$HOME/.agents/skills/microsoft-foundry"
 
       - name: Uninstall + zap
         if: always()
