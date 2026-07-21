@@ -2,10 +2,7 @@ name: Verify cask
 
 on:
   push:
-    paths:
-      - "Casks/**"
-      - ".github/workflows/verify-cask.yml"
-  pull_request:
+    branches: [main]
     paths:
       - "Casks/**"
       - ".github/workflows/verify-cask.yml"
@@ -23,10 +20,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13   # Intel
-            arch: x64
-          - os: macos-14   # Apple Silicon
+          - os: macos-latest    # Apple Silicon
             arch: arm64
+          - os: macos-15-intel  # Intel
+            arch: x64
     env:
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_ANALYTICS: "1"
@@ -34,20 +31,21 @@ jobs:
       # The cask forwards this to the binary as GH_TOKEN.
       HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Runner arch
         run: uname -m
 
+      # Real user flow: tap the published repo and install by the fully-qualified cask name
+      # (no local file). Exercises tap resolution + quarantine + the azure-cli dependency +
+      # postflight (foundry-devpack --channel brew -> azd + extension + skill).
+      - name: Tap
+        run: brew tap SmallBlackHole/foundry
+
       - name: Audit cask (informational)
         continue-on-error: true
-        run: brew audit --cask ./Casks/devpack.rb
+        run: brew audit --cask SmallBlackHole/foundry/devpack
 
-      # Installs the cask exactly as a user would: applies quarantine, resolves the azure-cli
-      # dependency, and runs postflight (foundry-devpack --channel brew) to install azd + the
-      # azd Foundry extension + the skill. A non-zero postflight fails this step.
-      - name: Install cask
-        run: brew install --cask ./Casks/devpack.rb
+      - name: Install cask (real smoke test)
+        run: brew install --cask SmallBlackHole/foundry/devpack
 
       - name: Verify foundry-devpack on PATH
         run: |
@@ -77,4 +75,4 @@ jobs:
 
       - name: Uninstall + zap
         if: always()
-        run: brew uninstall --zap --cask ./Casks/devpack.rb || true
+        run: brew uninstall --zap --cask SmallBlackHole/foundry/devpack || true
