@@ -17,6 +17,12 @@ InstallerSwitches:
   SilentWithProgress: "--channel winget --ensure"
 InstallerSuccessCodes:
   - 0
+# Let winget install az/azd as package dependencies (their own signed packages)
+# before running our exe, so the installer verifies them instead of provisioning.
+Dependencies:
+  PackageDependencies:
+    - PackageIdentifier: Microsoft.AzureCLI
+    - PackageIdentifier: Microsoft.Azd
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.4/foundry-devpack-win-x64.exe

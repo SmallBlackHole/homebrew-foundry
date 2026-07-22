@@ -54,17 +54,8 @@ jobs:
           # Local manifest install is gated behind an admin-enabled setting.
           winget settings --enable LocalManifestFiles
 
-      # Force provisioning from a clean state so the run actually exercises the
-      # installer's az/azd setup rather than finding them preinstalled.
-      - name: Uninstall az/azd (force provisioning from absent)
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          winget uninstall --silent --disable-interactivity --accept-source-agreements --id Microsoft.AzureCLI
-          winget uninstall --silent --disable-interactivity --accept-source-agreements --id Microsoft.Azd
-
       - name: Install (winget --manifest --silent)
-        timeout-minutes: 10
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
