@@ -1,4 +1,4 @@
-name: Verify cask
+name: Verify installers
 
 on:
   push:
@@ -88,3 +88,46 @@ jobs:
       - name: Uninstall + zap
         if: always()
         run: brew uninstall --zap --cask SmallBlackHole/foundry/devpack || true
+
+  # Linux "script" channel: exercises the published, resolved install.sh from the release
+  # (curl | bash). The bootstrapper downloads the linux binary, verifies its baked sha256, and
+  # runs it (--channel curl); the binary itself is temporary (it sets up the prerequisites, then
+  # the script cleans it up), so we assert the prerequisites, not foundry-devpack on PATH.
+  verify-script:
+    name: script ${{ matrix.arch }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest     # x64
+            arch: x64
+          - os: ubuntu-24.04-arm  # arm64
+            arch: arm64
+    env:
+      # The installer authenticates its GitHub calls (azd extension + skill) with this to avoid
+      # rate limits; the binary reads GITHUB_TOKEN / GH_TOKEN.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      INSTALL_SH_URL: "https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.4/install.sh"
+    steps:
+      - name: Runner arch
+        run: uname -m
+
+      - name: Install via script (real smoke test)
+        run: curl -fsSL "$INSTALL_SH_URL" | bash
+
+      - name: Verify prerequisites installed
+        run: |
+          set -euxo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          # az (installed/verified by the binary on the curl channel)
+          az version
+          # azd (installed by the binary)
+          azd version
+          # azd Foundry extension (id: microsoft.foundry)
+          azd ext list --installed
+          azd ext list --installed | grep -qi 'microsoft\.foundry'
+          # skill — verify real content, not just the directory
+          test -f "$HOME/.agents/skills/microsoft-foundry/SKILL.md"
+          ls -la "$HOME/.agents/skills/microsoft-foundry"
