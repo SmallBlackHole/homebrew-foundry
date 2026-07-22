@@ -1,0 +1,252 @@
+name: Verify installers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Casks/**"
+      - "winget/**"
+      - ".github/workflows/verify-installers.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One matrix across all three channels:
+#   [mac (brew cask), linux (script curl|bash), windows (winget)]
+#     x [x64, arm64] x [baseline, no-az, with-code] = 18 jobs.
+#
+#   baseline  - runner as-is
+#   no-az     - remove az first. linux: the binary installs it; mac/windows: the
+#               cask/manifest re-adds it as a dependency (validates dependency resolution)
+#   with-code - install VS Code first so the binary installs the VS Code Foundry extension
+#
+# Channel-specific gotchas are documented inline (winget nested-install deadlock,
+# arm64 winget bootstrap, mac cask fixed PATH, etc.).
+jobs:
+  verify:
+    name: ${{ matrix.platform }} ${{ matrix.scenario }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,     arch: arm64, platform: mac,     scenario: baseline,  install_timeout: 10 }
+          - { os: macos-latest,     arch: arm64, platform: mac,     scenario: no-az,     install_timeout: 10 }
+          - { os: macos-latest,     arch: arm64, platform: mac,     scenario: with-code, install_timeout: 10 }
+          - { os: macos-15-intel,   arch: x64,   platform: mac,     scenario: baseline,  install_timeout: 10 }
+          - { os: macos-15-intel,   arch: x64,   platform: mac,     scenario: no-az,     install_timeout: 10 }
+          - { os: macos-15-intel,   arch: x64,   platform: mac,     scenario: with-code, install_timeout: 10 }
+          - { os: ubuntu-latest,    arch: x64,   platform: linux,   scenario: baseline,  install_timeout: 10 }
+          - { os: ubuntu-latest,    arch: x64,   platform: linux,   scenario: no-az,     install_timeout: 10 }
+          - { os: ubuntu-latest,    arch: x64,   platform: linux,   scenario: with-code, install_timeout: 10 }
+          - { os: ubuntu-24.04-arm, arch: arm64, platform: linux,   scenario: baseline,  install_timeout: 10 }
+          - { os: ubuntu-24.04-arm, arch: arm64, platform: linux,   scenario: no-az,     install_timeout: 10 }
+          - { os: ubuntu-24.04-arm, arch: arm64, platform: linux,   scenario: with-code, install_timeout: 10 }
+          - { os: windows-latest,   arch: x64,   platform: windows, scenario: baseline,  install_timeout: 3 }
+          - { os: windows-latest,   arch: x64,   platform: windows, scenario: no-az,     install_timeout: 5 }
+          - { os: windows-latest,   arch: x64,   platform: windows, scenario: with-code, install_timeout: 5 }
+          - { os: windows-11-arm,   arch: arm64, platform: windows, scenario: baseline,  install_timeout: 8 }
+          - { os: windows-11-arm,   arch: arm64, platform: windows, scenario: no-az,     install_timeout: 8 }
+          - { os: windows-11-arm,   arch: arm64, platform: windows, scenario: with-code, install_timeout: 8 }
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      # brew: the cask forwards this to the binary as GH_TOKEN. script/winget: the binary reads it directly.
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      INSTALL_SH_URL: "https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.4/install.sh"
+      MANIFEST_DIR: winget/0.0.4
+    steps:
+      - name: Runner arch
+        shell: bash
+        run: uname -m
+
+      # winget installs a LOCAL manifest checked into this repo.
+      - name: Checkout (winget manifest)
+        if: matrix.platform == 'windows'
+        uses: actions/checkout@v4
+
+      # windows-11-arm runners do NOT ship winget; bootstrap via PSResourceGet
+      # (the legacy NuGet PackageProvider bootstrap fails on arm64) then add the
+      # repaired shim dir (%LOCALAPPDATA%\Microsoft\WinGet\Links) to PATH.
+      - name: "Ensure winget (windows)"
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $links = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links"
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Write-Host "winget not found; bootstrapping via Microsoft.WinGet.Client"
+            Install-PSResource -Name Microsoft.WinGet.Client -Repository PSGallery -TrustRepository -Reinstall
+            Import-Module Microsoft.WinGet.Client
+            Repair-WinGetPackageManager -Latest -Force
+            $env:Path = "$links;$env:Path"
+            Add-Content -Path $env:GITHUB_PATH -Value $links
+          }
+          winget --version
+          # Local manifest install is gated behind an admin-enabled setting.
+          winget settings --enable LocalManifestFiles
+
+      # --- scenario setup: no-az ---
+      - name: "Setup(linux): remove az"
+        if: matrix.platform == 'linux' && matrix.scenario == 'no-az'
+        run: |
+          set -x
+          sudo apt-get remove -y azure-cli || true
+          if command -v az; then echo "az still present after removal" >&2; exit 1; fi
+
+      - name: "Setup(mac): remove az"
+        if: matrix.platform == 'mac' && matrix.scenario == 'no-az'
+        run: |
+          set -x
+          # The cask declares azure-cli as a dependency, so `brew install` re-adds it; this scenario
+          # mainly validates dependency resolution from a clean state.
+          brew uninstall --ignore-dependencies azure-cli 2>/dev/null || true
+
+      - name: "Setup(windows): remove az"
+        if: matrix.platform == 'windows' && matrix.scenario == 'no-az'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          # The manifest declares Microsoft.AzureCLI as a dependency, so `winget
+          # install` re-adds it; this mainly validates dependency resolution.
+          winget uninstall --silent --disable-interactivity --accept-source-agreements --id Microsoft.AzureCLI
+
+      # --- scenario setup: with-code ---
+      - name: "Setup(linux): install VS Code"
+        if: matrix.platform == 'linux' && matrix.scenario == 'with-code'
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget gpg apt-transport-https
+          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /usr/share/keyrings/packages.microsoft.gpg >/dev/null
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list
+          sudo apt-get update
+          sudo apt-get install -y code
+          code --version
+
+      - name: "Setup(mac): install VS Code"
+        if: matrix.platform == 'mac' && matrix.scenario == 'with-code'
+        run: |
+          set -euxo pipefail
+          brew install --cask visual-studio-code
+          # Put `code` where the cask's fixed postflight PATH can find it (/usr/local/bin).
+          sudo mkdir -p /usr/local/bin
+          sudo ln -sf "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" /usr/local/bin/code
+          code --version
+
+      - name: "Setup(windows): install VS Code"
+        if: matrix.platform == 'windows' && matrix.scenario == 'with-code'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          winget install --silent --disable-interactivity `
+            --accept-package-agreements --accept-source-agreements `
+            --id Microsoft.VisualStudioCode
+          $code = Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"
+          if (-not (Test-Path $code)) { throw "code CLI not found at $code" }
+          & $code --version
+
+      # --- install ---
+      - name: "Install (brew cask)"
+        if: matrix.platform == 'mac'
+        run: |
+          set -x
+          brew tap SmallBlackHole/foundry
+          brew audit --cask SmallBlackHole/foundry/devpack || true   # informational
+          brew install --cask SmallBlackHole/foundry/devpack
+
+      - name: "Install (script curl|bash)"
+        if: matrix.platform == 'linux'
+        run: curl -fsSL "$INSTALL_SH_URL" | bash
+
+      # winget runs the exe (`--channel winget --ensure` via the Silent switch).
+      # `--silent` is REQUIRED: without it the exe gets no args, defaults to
+      # channel=direct, and shells out to a NESTED `winget install` -> deadlock.
+      - name: "Install (winget --manifest --silent)"
+        if: matrix.platform == 'windows'
+        timeout-minutes: ${{ matrix.install_timeout }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Make `code` discoverable to the installer (winget's child inherits this env).
+          $vscodeBin = Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin"
+          if (Test-Path $vscodeBin) { $env:Path = "$vscodeBin;$env:Path" }
+          winget install --manifest "$env:MANIFEST_DIR" --silent `
+            --disable-interactivity `
+            --accept-package-agreements --accept-source-agreements
+          if ($LASTEXITCODE -ne 0) { throw "winget install failed with $LASTEXITCODE" }
+
+      # --- mac only: binary stays on PATH (linked by the cask) + signature check ---
+      - name: "Verify foundry-devpack + signature (mac)"
+        if: matrix.platform == 'mac'
+        run: |
+          set -x
+          command -v foundry-devpack
+          foundry-devpack --help
+          bin="$(command -v foundry-devpack)"
+          real="$(readlink "$bin" 2>/dev/null || echo "$bin")"
+          codesign --verify --strict --verbose=2 "$real"
+          codesign -dvvv "$real" 2>&1 | grep -Ei 'Authority|TeamIdentifier|Identifier='
+
+      # --- prerequisites: mac/linux (bash) ---
+      - name: "Verify prerequisites (unix)"
+        if: matrix.platform != 'windows'
+        run: |
+          set -euxo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          az version                                            # preinstalled, cask dep, or binary-installed
+          azd version                                           # installed by the binary
+          azd ext list --installed
+          azd ext list --installed | grep -qi 'microsoft\.foundry'
+          test -f "$HOME/.agents/skills/microsoft-foundry/SKILL.md"
+
+      # --- prerequisites: windows (pwsh) ---
+      - name: "Verify prerequisites (windows)"
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Skill file is the PATH-robust anchor (winget's user-PATH edits aren't
+          # visible to a shell started before install).
+          $skill = Join-Path $env:USERPROFILE ".agents\skills\microsoft-foundry\SKILL.md"
+          if (-not (Test-Path $skill)) { throw "microsoft-foundry skill not found at $skill" }
+          Write-Host "OK: microsoft-foundry skill present"
+          # Refresh PATH from the registry (merge, don't replace) for az/azd/ext.
+          $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+          $user = [Environment]::GetEnvironmentVariable("Path", "User")
+          $env:Path = "$machine;$user;$env:Path"
+          az version
+          azd version
+          azd ext list --installed
+          if (-not (azd ext list --installed | Select-String -Quiet -Pattern 'microsoft\.foundry')) {
+            throw "azd Foundry extension not found"
+          }
+          Write-Host "OK: az + azd + microsoft.foundry extension all present"
+
+      # --- with-code: the binary should have installed the VS Code Foundry extension ---
+      - name: "Verify VS Code extension (unix)"
+        if: matrix.scenario == 'with-code' && matrix.platform != 'windows'
+        run: |
+          set -euxo pipefail
+          code --list-extensions | grep -qi 'ms-windows-ai-studio.windows-ai-studio'
+
+      - name: "Verify VS Code extension (windows)"
+        if: matrix.scenario == 'with-code' && matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vscodeBin = Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin"
+          $env:Path = "$vscodeBin;$env:Path"
+          if (-not (code --list-extensions | Select-String -Quiet -Pattern 'ms-windows-ai-studio.windows-ai-studio')) {
+            throw "VS Code Foundry extension not installed"
+          }
+          Write-Host "OK: VS Code Foundry extension present"
+
+      # --- cleanup (mac) ---
+      - name: "Uninstall + zap (mac)"
+        if: ${{ always() && matrix.platform == 'mac' }}
+        run: brew uninstall --zap --cask SmallBlackHole/foundry/devpack || true
