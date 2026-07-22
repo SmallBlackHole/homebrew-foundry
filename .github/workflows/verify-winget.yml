@@ -11,21 +11,26 @@ on:
 permissions:
   contents: read
 
-# Smoke test for the winget channel: install the local multi-file manifest with
-# `winget install --manifest`, which downloads the signed 0.0.4 exe from the
-# foundry-toolkit release, runs it (--channel winget --ensure), and then we assert
-# the same prerequisites the brew/script channels check.
+# Smoke test for the winget channel. Installs the local multi-file manifest with
+# `winget install --manifest --silent`, which downloads the signed 0.0.4 exe from
+# the foundry-toolkit release and runs it (`--channel winget --ensure`), then
+# asserts the prerequisites were provisioned.
+#
+# Notes learned the hard way:
+#   * MUST pass `--silent` so winget applies the Silent InstallerSwitches
+#     (`--channel winget --ensure`). With no args the exe defaults to
+#     channel=direct and shells out to a NESTED `winget install` -> deadlock.
+#   * Local manifests need `winget settings --enable LocalManifestFiles` (admin;
+#     the runner is elevated).
+#   * Windows verify anchors on the skill file, plus a registry PATH refresh for
+#     az/azd, because winget writes user-PATH the same shell won't otherwise pick up.
+#   * winget hosted runners are x64 only here; arm64 (windows-11-arm) winget
+#     bootstrap is not reliable yet, so it's out of scope for now.
 jobs:
   verify:
-    name: winget ${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: windows-latest, arch: x64 }
-          - { os: windows-11-arm, arch: arm64 }
+    name: winget x64
+    runs-on: windows-latest
+    timeout-minutes: 20
     env:
       # The installer downloads release assets from GitHub; give it a token so it
       # isn't throttled by anonymous rate limits. winget runs the exe as a child
@@ -46,33 +51,48 @@ jobs:
             Repair-WinGetPackageManager -Latest
           }
           winget --version
-          # `winget install --manifest` (local manifest files) is gated behind an
-          # admin-enabled setting; the runner is elevated.
+          # Local manifest install is gated behind an admin-enabled setting.
           winget settings --enable LocalManifestFiles
 
-      - name: Install (winget --manifest)
+      # Force provisioning from a clean state so the run actually exercises the
+      # installer's az/azd setup rather than finding them preinstalled.
+      - name: Uninstall az/azd (force provisioning from absent)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          winget uninstall --silent --disable-interactivity --accept-source-agreements --id Microsoft.AzureCLI
+          winget uninstall --silent --disable-interactivity --accept-source-agreements --id Microsoft.Azd
+
+      - name: Install (winget --manifest --silent)
+        timeout-minutes: 10
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          winget install --manifest "$env:MANIFEST_DIR" `
-            --accept-package-agreements --accept-source-agreements --verbose-logs
+          # `--silent` applies the manifest's Silent switch (`--channel winget --ensure`).
+          # Omitting it makes winget launch the exe with no args -> nested-winget deadlock.
+          winget install --manifest "$env:MANIFEST_DIR" --silent `
+            --disable-interactivity `
+            --accept-package-agreements --accept-source-agreements
           if ($LASTEXITCODE -ne 0) { throw "winget install failed with $LASTEXITCODE" }
 
       - name: Verify prerequisites installed
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          # The installer edits the persisted PATH; refresh this session from the registry.
+          # The skill file is the PATH-robust anchor (winget's user-PATH edits
+          # aren't visible to a shell started before install).
+          $skill = Join-Path $env:USERPROFILE ".agents\skills\microsoft-foundry\SKILL.md"
+          if (-not (Test-Path $skill)) { throw "microsoft-foundry skill not found at $skill" }
+          Write-Host "OK: microsoft-foundry skill present"
+
+          # Best-effort az/azd/ext checks after refreshing PATH from the registry.
           $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
           $user = [Environment]::GetEnvironmentVariable("Path", "User")
           $env:Path = "$machine;$user"
-
           az version
           azd version
           azd ext list --installed
           if (-not (azd ext list --installed | Select-String -Quiet -Pattern 'microsoft\.foundry')) {
             throw "azd Foundry extension not found"
           }
-          $skill = Join-Path $env:USERPROFILE ".agents\skills\microsoft-foundry\SKILL.md"
-          if (-not (Test-Path $skill)) { throw "microsoft-foundry skill not found at $skill" }
-          Write-Host "All prerequisites verified."
+          Write-Host "OK: az + azd + microsoft.foundry extension all present"

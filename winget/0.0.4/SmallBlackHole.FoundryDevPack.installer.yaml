@@ -3,12 +3,18 @@ PackageIdentifier: SmallBlackHole.FoundryDevPack
 PackageVersion: 0.0.4
 # Bare, Authenticode-signed AOT executables. `exe` type means winget RUNS the
 # binary at install time (parity with the brew postflight / curl|bash channels),
-# then discards it. The Custom switch drives the same idempotent pipeline the
-# other channels use.
+# then discards it.
+#
+# The args MUST be on the Silent/SilentWithProgress switches (and callers must
+# pass `winget install --silent`). If the exe is launched with NO args it treats
+# the channel as `direct` and shells out to a NESTED `winget install` for az/azd,
+# which deadlocks against the outer winget. `--channel winget` tells the exe it
+# is running under winget, so it provisions az/azd via direct download instead.
 InstallerType: exe
 Scope: user
 InstallerSwitches:
-  Custom: "--channel winget --ensure"
+  Silent: "--channel winget --ensure"
+  SilentWithProgress: "--channel winget --ensure"
 InstallerSuccessCodes:
   - 0
 Installers:
