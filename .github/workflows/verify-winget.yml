@@ -12,9 +12,9 @@ permissions:
   contents: read
 
 # Smoke test for the winget channel. Installs the local multi-file manifest with
-# `winget install --manifest --silent`, which downloads the signed 0.0.4 exe from
-# the foundry-toolkit release and runs it (`--channel winget --ensure`), then
-# asserts the prerequisites were provisioned.
+# `winget install --manifest --silent`, which resolves the az/azd package
+# dependencies, downloads the signed 0.0.4 exe from the foundry-toolkit release,
+# runs it (`--channel winget --ensure`), then asserts the prerequisites.
 #
 # Notes learned the hard way:
 #   * MUST pass `--silent` so winget applies the Silent InstallerSwitches
@@ -22,15 +22,22 @@ permissions:
 #     channel=direct and shells out to a NESTED `winget install` -> deadlock.
 #   * Local manifests need `winget settings --enable LocalManifestFiles` (admin;
 #     the runner is elevated).
+#   * windows-11-arm runners do NOT ship winget; bootstrap it via the
+#     Microsoft.WinGet.Client module + Repair-WinGetPackageManager, then add the
+#     repaired shim dir (%LOCALAPPDATA%\Microsoft\WinGet\Links) to PATH.
 #   * Windows verify anchors on the skill file, plus a registry PATH refresh for
-#     az/azd, because winget writes user-PATH the same shell won't otherwise pick up.
-#   * winget hosted runners are x64 only here; arm64 (windows-11-arm) winget
-#     bootstrap is not reliable yet, so it's out of scope for now.
+#     az/azd, because winget writes user-PATH the same shell won't pick up.
 jobs:
   verify:
-    name: winget x64
-    runs-on: windows-latest
-    timeout-minutes: 20
+    name: winget ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, arch: x64, install_timeout: 3 }
+          - { os: windows-11-arm, arch: arm64, install_timeout: 8 }
     env:
       # The installer downloads release assets from GitHub; give it a token so it
       # isn't throttled by anonymous rate limits. winget runs the exe as a child
@@ -44,18 +51,23 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $links = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links"
           if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
             Write-Host "winget not found; bootstrapping via Microsoft.WinGet.Client"
             Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
-            Install-Module -Name Microsoft.WinGet.Client -Force -Scope CurrentUser
-            Repair-WinGetPackageManager -Latest
+            Install-Module -Name Microsoft.WinGet.Client -Force -Scope CurrentUser -Repository PSGallery
+            Repair-WinGetPackageManager -Latest -Force
+            # The repaired winget shim lands in Links, which isn't on PATH yet.
+            # Add it for this step and for every subsequent step.
+            $env:Path = "$links;$env:Path"
+            Add-Content -Path $env:GITHUB_PATH -Value $links
           }
           winget --version
           # Local manifest install is gated behind an admin-enabled setting.
           winget settings --enable LocalManifestFiles
 
       - name: Install (winget --manifest --silent)
-        timeout-minutes: 3
+        timeout-minutes: ${{ matrix.install_timeout }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
