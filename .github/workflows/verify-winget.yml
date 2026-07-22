@@ -11,33 +11,36 @@ on:
 permissions:
   contents: read
 
-# Smoke test for the winget channel. Installs the local multi-file manifest with
-# `winget install --manifest --silent`, which resolves the az/azd package
-# dependencies, downloads the signed 0.0.4 exe from the foundry-toolkit release,
-# runs it (`--channel winget --ensure`), then asserts the prerequisites.
+# Smoke test for the winget channel: [x64, arm64] x [baseline, no-az, with-code].
+#   baseline  - runner as-is
+#   no-az     - uninstall az first; winget re-adds it via the manifest dependency
+#               (degenerate, like the brew cask case: validates dependency resolution)
+#   with-code - install VS Code first so the binary installs the VS Code Foundry extension
 #
 # Notes learned the hard way:
 #   * MUST pass `--silent` so winget applies the Silent InstallerSwitches
 #     (`--channel winget --ensure`). With no args the exe defaults to
 #     channel=direct and shells out to a NESTED `winget install` -> deadlock.
-#   * Local manifests need `winget settings --enable LocalManifestFiles` (admin;
-#     the runner is elevated).
-#   * windows-11-arm runners do NOT ship winget; bootstrap it via the
-#     Microsoft.WinGet.Client module + Repair-WinGetPackageManager, then add the
-#     repaired shim dir (%LOCALAPPDATA%\Microsoft\WinGet\Links) to PATH.
-#   * Windows verify anchors on the skill file, plus a registry PATH refresh for
-#     az/azd, because winget writes user-PATH the same shell won't pick up.
+#   * Local manifests need `winget settings --enable LocalManifestFiles` (admin).
+#   * windows-11-arm runners do NOT ship winget; bootstrap via PSResourceGet +
+#     Repair-WinGetPackageManager, then add the repaired shim dir
+#     (%LOCALAPPDATA%\Microsoft\WinGet\Links) to PATH.
+#   * Verify anchors on the skill file, plus a registry PATH refresh for az/azd.
 jobs:
   verify:
-    name: winget ${{ matrix.arch }}
+    name: winget ${{ matrix.scenario }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, arch: x64, install_timeout: 3 }
-          - { os: windows-11-arm, arch: arm64, install_timeout: 8 }
+          - { os: windows-latest, arch: x64,   scenario: baseline,  install_timeout: 3 }
+          - { os: windows-latest, arch: x64,   scenario: no-az,     install_timeout: 5 }
+          - { os: windows-latest, arch: x64,   scenario: with-code, install_timeout: 5 }
+          - { os: windows-11-arm, arch: arm64, scenario: baseline,  install_timeout: 8 }
+          - { os: windows-11-arm, arch: arm64, scenario: no-az,     install_timeout: 8 }
+          - { os: windows-11-arm, arch: arm64, scenario: with-code, install_timeout: 8 }
     env:
       # The installer downloads release assets from GitHub; give it a token so it
       # isn't throttled by anonymous rate limits. winget runs the exe as a child
@@ -60,7 +63,6 @@ jobs:
             Import-Module Microsoft.WinGet.Client
             Repair-WinGetPackageManager -Latest -Force
             # The repaired winget shim lands in Links, which isn't on PATH yet.
-            # Add it for this step and for every subsequent step.
             $env:Path = "$links;$env:Path"
             Add-Content -Path $env:GITHUB_PATH -Value $links
           }
@@ -68,11 +70,39 @@ jobs:
           # Local manifest install is gated behind an admin-enabled setting.
           winget settings --enable LocalManifestFiles
 
+      # --- scenario setup: no-az ---
+      - name: "Setup: uninstall az"
+        if: matrix.scenario == 'no-az'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          # The manifest declares Microsoft.AzureCLI as a dependency, so `winget
+          # install` re-adds it; this mainly validates dependency resolution.
+          winget uninstall --silent --disable-interactivity --accept-source-agreements --id Microsoft.AzureCLI
+
+      # --- scenario setup: with-code ---
+      - name: "Setup: install VS Code"
+        if: matrix.scenario == 'with-code'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          winget install --silent --disable-interactivity `
+            --accept-package-agreements --accept-source-agreements `
+            --id Microsoft.VisualStudioCode
+          $code = Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"
+          if (-not (Test-Path $code)) { throw "code CLI not found at $code" }
+          & $code --version
+
       - name: Install (winget --manifest --silent)
         timeout-minutes: ${{ matrix.install_timeout }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          # Make `code` discoverable to the installer (winget's child process
+          # inherits this env). No-op when VS Code isn't installed.
+          $vscodeBin = Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin"
+          if (Test-Path $vscodeBin) { $env:Path = "$vscodeBin;$env:Path" }
+
           # `--silent` applies the manifest's Silent switch (`--channel winget --ensure`).
           # Omitting it makes winget launch the exe with no args -> nested-winget deadlock.
           winget install --manifest "$env:MANIFEST_DIR" --silent `
@@ -93,7 +123,7 @@ jobs:
           # Best-effort az/azd/ext checks after refreshing PATH from the registry.
           $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
           $user = [Environment]::GetEnvironmentVariable("Path", "User")
-          $env:Path = "$machine;$user"
+          $env:Path = "$machine;$user;$env:Path"
           az version
           azd version
           azd ext list --installed
@@ -101,3 +131,15 @@ jobs:
             throw "azd Foundry extension not found"
           }
           Write-Host "OK: az + azd + microsoft.foundry extension all present"
+
+      - name: Verify VS Code extension
+        if: matrix.scenario == 'with-code'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vscodeBin = Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin"
+          $env:Path = "$vscodeBin;$env:Path"
+          if (-not (code --list-extensions | Select-String -Quiet -Pattern 'ms-windows-ai-studio.windows-ai-studio')) {
+            throw "VS Code Foundry extension not installed"
+          }
+          Write-Host "OK: VS Code Foundry extension present"
