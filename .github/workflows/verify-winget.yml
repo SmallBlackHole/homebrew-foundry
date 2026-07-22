@@ -1,0 +1,75 @@
+name: Verify winget
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "winget/**"
+      - ".github/workflows/verify-winget.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Smoke test for the winget channel: install the local multi-file manifest with
+# `winget install --manifest`, which downloads the signed 0.0.4 exe from the
+# foundry-toolkit release, runs it (--channel winget --ensure), and then we assert
+# the same prerequisites the brew/script channels check.
+jobs:
+  verify:
+    name: winget ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, arch: x64 }
+          - { os: windows-11-arm, arch: arm64 }
+    env:
+      # The installer downloads release assets from GitHub; give it a token so it
+      # isn't throttled by anonymous rate limits. winget runs the exe as a child
+      # process, which inherits this environment.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MANIFEST_DIR: winget/0.0.4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure winget is available
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Write-Host "winget not found; bootstrapping via Microsoft.WinGet.Client"
+            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
+            Install-Module -Name Microsoft.WinGet.Client -Force -Scope CurrentUser
+            Repair-WinGetPackageManager -Latest
+          }
+          winget --version
+
+      - name: Install (winget --manifest)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          winget install --manifest "$env:MANIFEST_DIR" `
+            --accept-package-agreements --accept-source-agreements --verbose-logs
+          if ($LASTEXITCODE -ne 0) { throw "winget install failed with $LASTEXITCODE" }
+
+      - name: Verify prerequisites installed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # The installer edits the persisted PATH; refresh this session from the registry.
+          $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+          $user = [Environment]::GetEnvironmentVariable("Path", "User")
+          $env:Path = "$machine;$user"
+
+          az version
+          azd version
+          azd ext list --installed
+          if (-not (azd ext list --installed | Select-String -Quiet -Pattern 'microsoft\.foundry')) {
+            throw "azd Foundry extension not found"
+          }
+          $skill = Join-Path $env:USERPROFILE ".agents\skills\microsoft-foundry\SKILL.md"
+          if (-not (Test-Path $skill)) { throw "microsoft-foundry skill not found at $skill" }
+          Write-Host "All prerequisites verified."

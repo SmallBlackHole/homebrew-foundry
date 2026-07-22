@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: Microsoft.FoundryDevPack
+PackageVersion: 0.0.4
+# Bare, Authenticode-signed AOT executables. `exe` type means winget RUNS the
+# binary at install time (parity with the brew postflight / curl|bash channels),
+# then discards it. The Custom switch drives the same idempotent pipeline the
+# other channels use.
+InstallerType: exe
+Scope: user
+InstallerSwitches:
+  Custom: "--channel winget --ensure"
+InstallerSuccessCodes:
+  - 0
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.4/foundry-devpack-win-x64.exe
+    InstallerSha256: 10FD4C0B7BE7CE506BD38BADC7CD4C6366E48458E85FB41D940BDDE3BC14148A
+  - Architecture: arm64
+    InstallerUrl: https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.4/foundry-devpack-win-arm64.exe
+    InstallerSha256: EE7F1A9F3CA426859F83F19B60DF4B72287D9E94DF1866BCB7B757C31B8BDA62
+ManifestType: installer
+ManifestVersion: 1.6.0
