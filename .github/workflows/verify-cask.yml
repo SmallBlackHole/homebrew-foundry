@@ -11,127 +11,62 @@ on:
 permissions:
   contents: read
 
+# One unified matrix: [mac (brew cask), linux (script curl|bash)] x [x64, arm64] x
+# [baseline, no-az, with-code] = 12 jobs.
+#   baseline  - runner as-is
+#   no-az     - remove az first (linux: binary installs it; mac: cask re-adds it as a dependency)
+#   with-code - install VS Code first so the binary installs the VS Code Foundry extension
 jobs:
   verify:
-    name: ${{ matrix.arch }} (${{ matrix.os }})
+    name: ${{ matrix.platform }} ${{ matrix.scenario }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest    # Apple Silicon
-            arch: arm64
-          - os: macos-15-intel  # Intel
-            arch: x64
+          - { os: macos-latest,     arch: arm64, platform: mac,   scenario: baseline }
+          - { os: macos-latest,     arch: arm64, platform: mac,   scenario: no-az }
+          - { os: macos-latest,     arch: arm64, platform: mac,   scenario: with-code }
+          - { os: macos-15-intel,   arch: x64,   platform: mac,   scenario: baseline }
+          - { os: macos-15-intel,   arch: x64,   platform: mac,   scenario: no-az }
+          - { os: macos-15-intel,   arch: x64,   platform: mac,   scenario: with-code }
+          - { os: ubuntu-latest,    arch: x64,   platform: linux, scenario: baseline }
+          - { os: ubuntu-latest,    arch: x64,   platform: linux, scenario: no-az }
+          - { os: ubuntu-latest,    arch: x64,   platform: linux, scenario: with-code }
+          - { os: ubuntu-24.04-arm, arch: arm64, platform: linux, scenario: baseline }
+          - { os: ubuntu-24.04-arm, arch: arm64, platform: linux, scenario: no-az }
+          - { os: ubuntu-24.04-arm, arch: arm64, platform: linux, scenario: with-code }
     env:
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_ANALYTICS: "1"
-      # Authenticates the installer's GitHub calls (azd extension + skill) to avoid rate limits.
-      # The cask forwards this to the binary as GH_TOKEN.
+      # brew: the cask forwards this to the binary as GH_TOKEN. script: the binary reads it directly.
       HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Runner arch
-        run: uname -m
-
-      # Real user flow: tap the published repo and install by the fully-qualified cask name
-      # (no local file). Exercises tap resolution + quarantine + the azure-cli dependency +
-      # postflight (foundry-devpack --channel brew -> azd + extension + skill).
-      - name: Tap
-        run: brew tap SmallBlackHole/foundry
-
-      - name: Audit cask (informational)
-        continue-on-error: true
-        run: brew audit --cask SmallBlackHole/foundry/devpack
-
-      - name: Install cask (real smoke test)
-        run: brew install --cask SmallBlackHole/foundry/devpack
-
-      - name: Verify foundry-devpack on PATH
-        run: |
-          set -x
-          command -v foundry-devpack
-          foundry-devpack --help
-
-      # Authoritative signature check for a bare CLI binary. (Notarization itself was already
-      # exercised: the cask ran the QUARANTINED binary in postflight, which Gatekeeper would
-      # have blocked if it were not notarized.)
-      - name: Verify code signature
-        run: |
-          set -x
-          bin="$(command -v foundry-devpack)"
-          real="$(readlink "$bin" 2>/dev/null || echo "$bin")"
-          echo "resolved binary: $real"
-          codesign --verify --strict --verbose=2 "$real"
-          codesign -dvvv "$real" 2>&1 | grep -Ei 'Authority|TeamIdentifier|Identifier='
-          # spctl -t exec assesses APP BUNDLES only; a bare CLI is reported "rejected (... does
-          # not seem to be an app)" even when validly signed + notarized, so this is informational.
-          spctl -a -t exec -vv "$real" || echo "(spctl -t exec is app-only; codesign above is authoritative for a bare CLI)"
-
-      # Assert every prerequisite the cask is supposed to leave behind (fails the job if any is
-      # missing). If the azd extension is absent it usually means postflight deferred it because
-      # azd wasn't on PATH yet -> the cask would then need a follow-up `foundry-devpack --ensure`.
-      - name: Verify prerequisites installed
-        run: |
-          set -euxo pipefail
-          # az — provided by the azure-cli Homebrew dependency
-          az version
-          # azd — installed by the binary during postflight
-          azd version
-          # azd Foundry extension (id: microsoft.foundry)
-          azd ext list --installed
-          azd ext list --installed | grep -qi 'microsoft\.foundry'
-          # skill — verify real content, not just the directory
-          test -f "$HOME/.agents/skills/microsoft-foundry/SKILL.md"
-          ls -la "$HOME/.agents/skills/microsoft-foundry"
-
-      - name: Uninstall + zap
-        if: always()
-        run: brew uninstall --zap --cask SmallBlackHole/foundry/devpack || true
-
-  # Linux "script" channel: exercises the published, resolved install.sh from the release
-  # (curl | bash). The bootstrapper downloads the linux binary, verifies its baked sha256, and
-  # runs it (--channel curl); the binary is temporary (sets up the prerequisites, then the script
-  # cleans it up), so we assert the prerequisites, not foundry-devpack on PATH.
-  #
-  # Scenarios (one job each, per arch):
-  #   baseline  - runner as-is (az preinstalled -> the az step SKIPs)
-  #   no-az     - remove az first -> the binary must install it (az step OK, not SKIP)
-  #   with-code - install VS Code first -> the binary installs the VS Code Foundry extension
-  verify-script:
-    name: script ${{ matrix.scenario }} ${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest,    arch: x64,   scenario: baseline }
-          - { os: ubuntu-24.04-arm, arch: arm64, scenario: baseline }
-          - { os: ubuntu-latest,    arch: x64,   scenario: no-az }
-          - { os: ubuntu-24.04-arm, arch: arm64, scenario: no-az }
-          - { os: ubuntu-latest,    arch: x64,   scenario: with-code }
-          - { os: ubuntu-24.04-arm, arch: arm64, scenario: with-code }
-    env:
-      # The installer authenticates its GitHub calls (azd extension + skill) with this to avoid
-      # rate limits; the binary reads GITHUB_TOKEN / GH_TOKEN.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       INSTALL_SH_URL: "https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.4/install.sh"
     steps:
       - name: Runner arch
         run: uname -m
 
-      # no-az: remove the preinstalled Azure CLI so the binary must install it via its apt path.
-      - name: "Setup: remove az"
-        if: matrix.scenario == 'no-az'
+      # --- scenario setup: no-az ---
+      - name: "Setup(linux): remove az"
+        if: matrix.platform == 'linux' && matrix.scenario == 'no-az'
         run: |
           set -x
           sudo apt-get remove -y azure-cli || true
           if command -v az; then echo "az still present after removal" >&2; exit 1; fi
 
-      # with-code: install VS Code so `code` is on PATH and the VS Code extension step runs.
-      - name: "Setup: install VS Code"
-        if: matrix.scenario == 'with-code'
+      - name: "Setup(mac): remove az"
+        if: matrix.platform == 'mac' && matrix.scenario == 'no-az'
+        run: |
+          set -x
+          # The cask declares azure-cli as a dependency, so `brew install` re-adds it; this scenario
+          # mainly validates dependency resolution from a clean state.
+          brew uninstall --ignore-dependencies azure-cli 2>/dev/null || true
+
+      # --- scenario setup: with-code ---
+      - name: "Setup(linux): install VS Code"
+        if: matrix.platform == 'linux' && matrix.scenario == 'with-code'
         run: |
           set -euxo pipefail
           sudo apt-get update
@@ -142,26 +77,60 @@ jobs:
           sudo apt-get install -y code
           code --version
 
-      - name: Install via script (real smoke test)
+      - name: "Setup(mac): install VS Code"
+        if: matrix.platform == 'mac' && matrix.scenario == 'with-code'
+        run: |
+          set -euxo pipefail
+          brew install --cask visual-studio-code
+          # Put `code` where the cask's fixed postflight PATH can find it (/usr/local/bin).
+          sudo mkdir -p /usr/local/bin
+          sudo ln -sf "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" /usr/local/bin/code
+          code --version
+
+      # --- install ---
+      - name: "Install (brew cask)"
+        if: matrix.platform == 'mac'
+        run: |
+          set -x
+          brew tap SmallBlackHole/foundry
+          brew audit --cask SmallBlackHole/foundry/devpack || true   # informational
+          brew install --cask SmallBlackHole/foundry/devpack
+
+      - name: "Install (script curl|bash)"
+        if: matrix.platform == 'linux'
         run: curl -fsSL "$INSTALL_SH_URL" | bash
 
-      - name: Verify prerequisites installed
+      # --- mac only: binary stays on PATH (linked by the cask) + signature check ---
+      - name: "Verify foundry-devpack + signature (mac)"
+        if: matrix.platform == 'mac'
+        run: |
+          set -x
+          command -v foundry-devpack
+          foundry-devpack --help
+          bin="$(command -v foundry-devpack)"
+          real="$(readlink "$bin" 2>/dev/null || echo "$bin")"
+          codesign --verify --strict --verbose=2 "$real"
+          codesign -dvvv "$real" 2>&1 | grep -Ei 'Authority|TeamIdentifier|Identifier='
+
+      # --- prerequisites (both channels) ---
+      - name: "Verify prerequisites installed"
         run: |
           set -euxo pipefail
           export PATH="$HOME/.local/bin:$PATH"
-          # az — preinstalled (baseline/with-code) or installed by the binary (no-az)
-          az version
-          # azd — installed by the binary
-          azd version
-          # azd Foundry extension (id: microsoft.foundry)
+          az version                                            # preinstalled, cask dep, or binary-installed
+          azd version                                           # installed by the binary
           azd ext list --installed
           azd ext list --installed | grep -qi 'microsoft\.foundry'
-          # skill — verify real content, not just the directory
           test -f "$HOME/.agents/skills/microsoft-foundry/SKILL.md"
 
-      # with-code: the binary should have installed the VS Code Foundry extension.
+      # --- with-code: the binary should have installed the VS Code Foundry extension ---
       - name: "Verify VS Code extension"
         if: matrix.scenario == 'with-code'
         run: |
           set -euxo pipefail
           code --list-extensions | grep -qi 'ms-windows-ai-studio.windows-ai-studio'
+
+      # --- cleanup (mac) ---
+      - name: "Uninstall + zap (mac)"
+        if: ${{ always() && matrix.platform == 'mac' }}
+        run: brew uninstall --zap --cask SmallBlackHole/foundry/devpack || true
