@@ -46,6 +46,9 @@ jobs:
             Repair-WinGetPackageManager -Latest
           }
           winget --version
+          # `winget install --manifest` (local manifest files) is gated behind an
+          # admin-enabled setting; the runner is elevated.
+          winget settings --enable LocalManifestFiles
 
       - name: Install (winget --manifest)
         shell: pwsh
