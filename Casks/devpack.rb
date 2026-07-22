@@ -42,9 +42,17 @@ cask "devpack" do
     token = ENV["HOMEBREW_GITHUB_API_TOKEN"].to_s.strip
     run_env["GH_TOKEN"] = token unless token.empty?
     system_command "#{staged_path}/foundry-devpack",
-                   args: ["--channel", "brew"],
-                   env:  run_env
+                   args:         ["--channel", "brew"],
+                   env:          run_env,
+                   print_stdout: true
   end
+
+  caveats <<~EOS
+    Foundry prerequisites (Azure CLI, azd, the azd Foundry extension, and the
+    microsoft-foundry skill) were set up during install.
+    Re-verify or repair them anytime with:
+      foundry-devpack --ensure
+  EOS
 
   # `brew uninstall` removes the linked binary automatically; `--zap` also clears what the
   # installer created (the skill + its state). azd/az are left in place (az is a brew dep).
