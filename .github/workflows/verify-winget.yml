@@ -54,8 +54,10 @@ jobs:
           $links = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links"
           if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
             Write-Host "winget not found; bootstrapping via Microsoft.WinGet.Client"
-            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
-            Install-Module -Name Microsoft.WinGet.Client -Force -Scope CurrentUser -Repository PSGallery
+            # Use PSResourceGet (built into PowerShell 7.4+); the legacy NuGet
+            # PackageProvider bootstrap fails on windows-11-arm runners.
+            Install-PSResource -Name Microsoft.WinGet.Client -Repository PSGallery -TrustRepository -Reinstall
+            Import-Module Microsoft.WinGet.Client
             Repair-WinGetPackageManager -Latest -Force
             # The repaired winget shim lands in Links, which isn't on PATH yet.
             # Add it for this step and for every subsequent step.
