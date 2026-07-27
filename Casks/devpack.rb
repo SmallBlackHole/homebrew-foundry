@@ -11,9 +11,9 @@
 cask "devpack" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.0.4"
-  sha256 arm:   "c73b9f46db8fc02585f2ff224724d5db64b743b880dbde2a93194239fd0142f6",
-         intel: "4297d83cf5bbf07bc1e640cadfafbbbcd8026338207c7b12758e4346ce6e1e76"
+  version "0.0.5"
+  sha256 arm:   "a0d36237f1fa35067e1ba4f4c96baa522c8593c03c0901e27e76c4d87ce95595",
+         intel: "8b59fcaf7ad598dc998e7393089ae1bcb60341f3a619db02c2b968fa1441f05f"
 
   url "https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-#{version}/foundry-devpack-osx-#{arch}.zip",
       verified: "github.com/microsoft/foundry-toolkit/"
@@ -42,7 +42,7 @@ cask "devpack" do
     token = ENV["HOMEBREW_GITHUB_API_TOKEN"].to_s.strip
     run_env["GH_TOKEN"] = token unless token.empty?
     system_command "#{staged_path}/foundry-devpack",
-                   args:         ["--channel", "brew"],
+                   args:         ["install", "--channel", "brew"],
                    env:          run_env,
                    print_stdout: true
   end
@@ -51,7 +51,7 @@ cask "devpack" do
     Foundry prerequisites (Azure CLI, azd, the azd Foundry extension, and the
     microsoft-foundry skill) were set up during install.
     Re-verify or repair them anytime with:
-      foundry-devpack --ensure
+      foundry-devpack install
   EOS
 
   # `brew uninstall` removes the linked binary automatically; `--zap` also clears what the

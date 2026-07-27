@@ -12,7 +12,7 @@ That single command:
 
 1. Installs `az` (Azure CLI) from Homebrew core (declared dependency).
 2. Downloads the signed, notarized `foundry-devpack` binary and links it onto your `PATH`.
-3. Runs it (`--channel brew`) to install the remaining Foundry prerequisites — `azd`, the azd
+3. Runs it (`install --channel brew`) to install the remaining Foundry prerequisites — `azd`, the azd
    Foundry extension, and the `microsoft-foundry` skill.
 
 The binary itself is Developer-ID signed and Apple-notarized, so Gatekeeper allows it to run

@@ -6,6 +6,7 @@ on:
     paths:
       - "Casks/**"
       - "winget/**"
+      - "install.sh"
       - ".github/workflows/verify-installers.yml"
   workflow_dispatch:
 
@@ -57,8 +58,8 @@ jobs:
       HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      INSTALL_SH_URL: "https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.4/install.sh"
-      MANIFEST_DIR: winget/0.0.4
+      INSTALL_SH_URL: "https://raw.githubusercontent.com/SmallBlackHole/homebrew-foundry/main/install.sh"
+      MANIFEST_DIR: winget/0.0.5
     steps:
       - name: Runner arch
         shell: bash
@@ -163,7 +164,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: curl -fsSL "$INSTALL_SH_URL" | bash
 
-      # winget runs the exe (`--channel winget --ensure` via the Silent switch).
+      # winget runs the exe (`install --channel winget` via the Silent switch).
       # `--silent` is REQUIRED: without it the exe gets no args, defaults to
       # channel=direct, and shells out to a NESTED `winget install` -> deadlock.
       - name: "Install (winget --manifest --silent)"
