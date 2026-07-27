@@ -1,13 +1,15 @@
 # Homebrew cask for the Foundry DevPack installer.
 #
-# Lives in the microsoft/homebrew-foundry tap; the fully-qualified name auto-taps, so a
-# single command installs everything:
+# Lives in the microsoft/homebrew-foundry tap; the fully-qualified name auto-taps:
 #
-#   brew install --cask microsoft/foundry/devpack
+#   brew install --cask microsoft/foundry/devpack         # stages the CLI (+ az)
+#   foundry-devpack install [--preset cli|vscode|copilot]  # provisions (omit --preset for all)
 #
-# The signed + notarized binary is hosted on the microsoft/foundry-toolkit release. az comes
-# from Homebrew core (declared dependency); azd + the azd Foundry extension + the skill are
-# installed by our binary in postflight (--channel brew).
+# This is a THIN cask: it only downloads the signed + notarized binary (hosted on the
+# microsoft/foundry-toolkit release), links it onto PATH, and installs az as a dependency. It
+# does NOT run the binary -- provisioning (azd + the azd Foundry extension + the skill, and
+# optionally the VS Code extension / Copilot canvas) is the explicit `foundry-devpack install`
+# step, which lets users pick a preset.
 cask "devpack" do
   arch arm: "arm64", intel: "x64"
 
@@ -21,37 +23,26 @@ cask "devpack" do
   desc "Foundry prerequisites installer"
   homepage "https://github.com/microsoft/foundry-toolkit"
 
-  # az is a Homebrew core formula -> installed as a dependency. azd is NOT a brew dep: its tap
-  # now requires `brew tap` + trust for dependency loading, which would break the one-command
-  # install, so the binary installs azd via aka.ms/install-azd.sh in postflight instead.
+  # az is a Homebrew core formula -> installed as a dependency. azd is NOT a brew dep: it ships
+  # as a cask in the third-party `azure/azd` tap (which needs `brew trust`), so `foundry-devpack
+  # install` provisions azd itself via aka.ms/install-azd.sh.
   depends_on formula: "azure-cli"
   depends_on macos: :ventura
 
+  # Thin cask: stage the CLI on PATH only. Provisioning is the explicit `foundry-devpack install`
+  # step (see caveats), so users can choose a preset. No postflight -> `brew install` never runs
+  # the binary (also sidesteps any nested-brew concerns).
   binary "foundry-devpack"
 
-  postflight do
-    # Homebrew scrubs the environment for postflight, so give the binary a real PATH or it
-    # won't find `brew` / the brew-installed `az`. `--channel brew` tells it az is provided by
-    # Homebrew (verify only) while it installs azd + the extension + the skill itself.
-    run_env = {
-      "PATH" => "#{HOMEBREW_PREFIX}/bin:#{Dir.home}/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-    }
-    # Forward a GitHub token only when present. Homebrew strips non-HOMEBREW_ vars but keeps
-    # HOMEBREW_GITHUB_API_TOKEN; the binary reads GH_TOKEN. Passing an empty value would send
-    # `Authorization: Bearer ''` -> 401, so omit the key when blank.
-    token = ENV["HOMEBREW_GITHUB_API_TOKEN"].to_s.strip
-    run_env["GH_TOKEN"] = token unless token.empty?
-    system_command "#{staged_path}/foundry-devpack",
-                   args:         ["install", "--channel", "brew"],
-                   env:          run_env,
-                   print_stdout: true
-  end
-
   caveats <<~EOS
-    Foundry prerequisites (Azure CLI, azd, the azd Foundry extension, and the
-    microsoft-foundry skill) were set up during install.
-    Re-verify or repair them anytime with:
-      foundry-devpack install
+    The foundry-devpack CLI is installed. Finish setting up your Foundry prerequisites with:
+
+      foundry-devpack install                     # everything (default)
+      foundry-devpack install --preset cli        # Azure CLI + azd + azd Foundry extension + skill
+      foundry-devpack install --preset vscode     # the above + VS Code Foundry extension
+      foundry-devpack install --preset copilot    # the above + GitHub Copilot App canvas
+
+    Re-run any time to verify or repair.
   EOS
 
   # `brew uninstall` removes the linked binary automatically; `--zap` also clears what the

@@ -159,6 +159,8 @@ jobs:
           brew tap SmallBlackHole/foundry
           brew audit --cask SmallBlackHole/foundry/devpack || true   # informational
           brew install --cask SmallBlackHole/foundry/devpack
+          # Thin cask only stages the CLI on PATH; provisioning is the explicit second command.
+          foundry-devpack install
 
       - name: "Install (script curl|bash)"
         if: matrix.platform == 'linux'
