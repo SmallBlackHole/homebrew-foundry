@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: SmallBlackHole.FoundryDevPack
+PackageVersion: 0.0.6
+# Bare, Authenticode-signed AOT executables. `exe` type means winget RUNS the
+# binary at install time (parity with the brew postflight / curl|bash channels).
+#
+# The args MUST be on the Silent/SilentWithProgress switches (and callers must
+# pass `winget install --silent`). `install --channel winget` tells the exe it is
+# running under winget, so it verifies az/azd (installed as winget dependencies
+# below) instead of installing them.
+InstallerType: exe
+Scope: user
+InstallerSwitches:
+  Silent: "install --channel winget"
+  SilentWithProgress: "install --channel winget"
+# The exe registers a per-user Add/Remove Programs entry (HKCU, key =
+# Microsoft.FoundryDevPack) on success, so winget can detect/upgrade/uninstall it.
+# ProductCode = that ARP subkey; DisplayVersion must match PackageVersion.
+AppsAndFeaturesEntries:
+  - ProductCode: Microsoft.FoundryDevPack
+    DisplayVersion: 0.0.6
+# Let winget install az/azd as package dependencies (their own signed packages)
+# before running our exe, so the installer verifies them instead of provisioning.
+Dependencies:
+  PackageDependencies:
+    - PackageIdentifier: Microsoft.AzureCLI
+    - PackageIdentifier: Microsoft.Azd
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.6/foundry-devpack-win-x64.exe
+    InstallerSha256: 0D96DB6CD27B8DB4D2F3F4246A57F38C8CBB1913ACB91EEB7930D0CD7557E0B9
+  - Architecture: arm64
+    InstallerUrl: https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-0.0.6/foundry-devpack-win-arm64.exe
+    InstallerSha256: B725FB340AF8D66D1321DE538C730241288D41A167121C0E20AD9D12E2916F2E
+ManifestType: installer
+ManifestVersion: 1.6.0

@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
 PackageIdentifier: SmallBlackHole.FoundryDevPack
-PackageVersion: 0.0.5
+PackageVersion: 0.0.6
 PackageLocale: en-US
 Publisher: Microsoft Corporation
 PublisherUrl: https://www.microsoft.com
@@ -8,7 +8,7 @@ PackageName: Microsoft Foundry DevPack Installer
 PackageUrl: https://github.com/microsoft/foundry-toolkit
 License: Proprietary
 Copyright: Copyright (c) Microsoft Corporation
-ShortDescription: Sets up Microsoft Foundry prerequisites (Azure CLI, azd, the azd Foundry extension, the VS Code Foundry extension, and the microsoft-foundry skill).
+ShortDescription: Sets up Microsoft Foundry prerequisites (Azure CLI, azd, the azd Foundry extension, the VS Code Foundry extension, the microsoft-foundry skill, and the Foundry Copilot plugin).
 Moniker: foundry-devpack
 Tags:
   - ai

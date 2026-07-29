@@ -13,9 +13,9 @@
 cask "devpack" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.0.5"
-  sha256 arm:   "a0d36237f1fa35067e1ba4f4c96baa522c8593c03c0901e27e76c4d87ce95595",
-         intel: "8b59fcaf7ad598dc998e7393089ae1bcb60341f3a619db02c2b968fa1441f05f"
+  version "0.0.6"
+  sha256 arm:   "39364cf208423570155df0d11571b5b1ce523c5eacb4234ac8871233e69193ce",
+         intel: "d6bcf96950e9a4aa93584484721ed0bb988a3830faba9533c6361f1c90fa8619"
 
   url "https://github.com/microsoft/foundry-toolkit/releases/download/devpack-installer-#{version}/foundry-devpack-osx-#{arch}.zip",
       verified: "github.com/microsoft/foundry-toolkit/"
@@ -40,7 +40,7 @@ cask "devpack" do
       foundry-devpack install                     # everything (default)
       foundry-devpack install --preset cli        # Azure CLI + azd + azd Foundry extension + skill
       foundry-devpack install --preset vscode     # the above + VS Code Foundry extension
-      foundry-devpack install --preset copilot    # the above + GitHub Copilot App canvas
+      foundry-devpack install --preset copilot    # the above + Foundry Copilot plugin (needs the Copilot CLI)
 
     Re-run any time to verify or repair.
   EOS

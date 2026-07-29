@@ -8,9 +8,9 @@ set -euo pipefail
 
 # --- release coordinates ---
 REPO="microsoft/foundry-toolkit"          # repo hosting the signed release assets
-VERSION="0.0.5"
-SHA256_LINUX_X64="95c55b11893929467c97c5f987aab613ca95019664c37d99ec1e98364612b13b"
-SHA256_LINUX_ARM64="831df793bfdc49d3122dd2cc339332881cb06c21dcc35671efa30c866bede74b"
+VERSION="0.0.6"
+SHA256_LINUX_X64="547fb12083d381e6c7de6e2dbf7d059ecad3de441d38939ba3a54ba684d80b8e"
+SHA256_LINUX_ARM64="8085f59777a02fb93e7b199d2f65198b98314e11917df3ba3f3bc95d2f0a99b1"
 
 TAG="devpack-installer-${VERSION}"
 

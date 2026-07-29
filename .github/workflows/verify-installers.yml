@@ -20,7 +20,9 @@ permissions:
 #   baseline  - runner as-is
 #   no-az     - remove az first. linux: the binary installs it; mac/windows: the
 #               cask/manifest re-adds it as a dependency (validates dependency resolution)
-#   with-code - install VS Code first so the binary installs the VS Code Foundry extension
+#   with-code - install VS Code AND the GitHub Copilot CLI first, so the binary installs the VS
+#               Code Foundry extension AND the Foundry Copilot plugin (Canvas). The other two
+#               scenarios have no Copilot CLI, so they verify the Canvas step skips gracefully.
 #
 # Channel-specific gotchas are documented inline (winget nested-install deadlock,
 # arm64 winget bootstrap, mac cask fixed PATH, etc.).
@@ -35,22 +37,22 @@ jobs:
         include:
           - { os: macos-latest,     arch: arm64, platform: mac,     scenario: baseline,  install_timeout: 10 }
           - { os: macos-latest,     arch: arm64, platform: mac,     scenario: no-az,     install_timeout: 10 }
-          - { os: macos-latest,     arch: arm64, platform: mac,     scenario: with-code, install_timeout: 10 }
+          - { os: macos-latest,     arch: arm64, platform: mac,     scenario: with-code, install_timeout: 10, copilot: true }
           - { os: macos-15-intel,   arch: x64,   platform: mac,     scenario: baseline,  install_timeout: 10 }
           - { os: macos-15-intel,   arch: x64,   platform: mac,     scenario: no-az,     install_timeout: 10 }
-          - { os: macos-15-intel,   arch: x64,   platform: mac,     scenario: with-code, install_timeout: 10 }
+          - { os: macos-15-intel,   arch: x64,   platform: mac,     scenario: with-code, install_timeout: 10, copilot: true }
           - { os: ubuntu-latest,    arch: x64,   platform: linux,   scenario: baseline,  install_timeout: 10 }
           - { os: ubuntu-latest,    arch: x64,   platform: linux,   scenario: no-az,     install_timeout: 10 }
-          - { os: ubuntu-latest,    arch: x64,   platform: linux,   scenario: with-code, install_timeout: 10 }
+          - { os: ubuntu-latest,    arch: x64,   platform: linux,   scenario: with-code, install_timeout: 10, copilot: true }
           - { os: ubuntu-24.04-arm, arch: arm64, platform: linux,   scenario: baseline,  install_timeout: 10 }
           - { os: ubuntu-24.04-arm, arch: arm64, platform: linux,   scenario: no-az,     install_timeout: 10 }
-          - { os: ubuntu-24.04-arm, arch: arm64, platform: linux,   scenario: with-code, install_timeout: 10 }
+          - { os: ubuntu-24.04-arm, arch: arm64, platform: linux,   scenario: with-code, install_timeout: 10, copilot: true }
           - { os: windows-latest,   arch: x64,   platform: windows, scenario: baseline,  install_timeout: 3 }
           - { os: windows-latest,   arch: x64,   platform: windows, scenario: no-az,     install_timeout: 5 }
-          - { os: windows-latest,   arch: x64,   platform: windows, scenario: with-code, install_timeout: 5 }
+          - { os: windows-latest,   arch: x64,   platform: windows, scenario: with-code, install_timeout: 5, copilot: true }
           - { os: windows-11-arm,   arch: arm64, platform: windows, scenario: baseline,  install_timeout: 8 }
           - { os: windows-11-arm,   arch: arm64, platform: windows, scenario: no-az,     install_timeout: 8 }
-          - { os: windows-11-arm,   arch: arm64, platform: windows, scenario: with-code, install_timeout: 8 }
+          - { os: windows-11-arm,   arch: arm64, platform: windows, scenario: with-code, install_timeout: 8, copilot: true }
     env:
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_ANALYTICS: "1"
@@ -59,7 +61,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       INSTALL_SH_URL: "https://raw.githubusercontent.com/SmallBlackHole/homebrew-foundry/main/install.sh"
-      MANIFEST_DIR: winget/0.0.5
+      MANIFEST_DIR: winget/0.0.6
     steps:
       - name: Runner arch
         shell: bash
@@ -150,6 +152,31 @@ jobs:
           $code = Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"
           if (-not (Test-Path $code)) { throw "code CLI not found at $code" }
           & $code --version
+
+      # --- Copilot CLI: install it BEFORE provisioning so the installer's Canvas step can add the
+      #     Foundry Copilot plugin (microsoft-foundry@awesome-copilot). No auth needed. ---
+      - name: "Setup(mac): Copilot CLI"
+        if: ${{ matrix.platform == 'mac' && matrix.copilot }}
+        run: brew install --cask copilot-cli
+
+      - name: "Setup(linux): Copilot CLI"
+        if: ${{ matrix.platform == 'linux' && matrix.copilot }}
+        run: |
+          set -euxo pipefail
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: "Setup(windows): Copilot CLI"
+        if: ${{ matrix.platform == 'windows' && matrix.copilot }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          winget install --silent --disable-interactivity `
+            --accept-package-agreements --accept-source-agreements `
+            --id GitHub.Copilot
+          # Expose copilot.exe to later steps AND the winget-install child (so Canvas finds it).
+          $pkg = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory -Filter 'GitHub.Copilot_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($pkg) { Add-Content -Path $env:GITHUB_PATH -Value $pkg.FullName }
 
       # --- install ---
       - name: "Install (brew cask)"
@@ -248,6 +275,62 @@ jobs:
             throw "VS Code Foundry extension not installed"
           }
           Write-Host "OK: VS Code Foundry extension present"
+
+      # --- Canvas: the installer's Copilot-plugin step should have added the Foundry plugin ---
+      - name: "Verify Foundry Copilot plugin (unix)"
+        if: ${{ matrix.platform != 'windows' && matrix.copilot }}
+        run: |
+          set -euxo pipefail
+          export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+          copilot plugin list --no-color
+          copilot plugin list --no-color | grep -qi 'microsoft-foundry'
+
+      - name: "Verify Foundry Copilot plugin (windows)"
+        if: ${{ matrix.platform == 'windows' && matrix.copilot }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+          $user = [Environment]::GetEnvironmentVariable("Path", "User")
+          $env:Path = "$machine;$user;$env:Path"
+          copilot plugin list --no-color | Out-Host
+          if (-not (copilot plugin list --no-color | Select-String -Quiet -Pattern 'microsoft-foundry')) {
+            throw "Foundry Copilot plugin not installed"
+          }
+          Write-Host "OK: Foundry Copilot plugin present"
+
+      # --- Canvas skip path: no Copilot CLI in these scenarios, so the install (asserted exit 0
+      #     above) must have skipped the Canvas step gracefully rather than failing. ---
+      - name: "Verify Canvas skipped without Copilot"
+        if: ${{ !matrix.copilot }}
+        shell: bash
+        run: |
+          set -uxo pipefail
+          if command -v copilot >/dev/null 2>&1; then echo "note: a copilot CLI was unexpectedly present"; fi
+          echo "OK: provisioning succeeded with no Copilot CLI (Canvas skipped gracefully)"
+
+      # --- ARP: the exe registers a per-user Add/Remove Programs entry on Windows; validate it and
+      #     that winget/uninstall clears it (runs our `foundry-devpack uninstall`). Runs last since
+      #     it removes the install. ---
+      - name: "Verify ARP + uninstall (windows)"
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft.FoundryDevPack"
+          if (-not (Test-Path $key)) { throw "ARP entry (Microsoft.FoundryDevPack) not found after install" }
+          $p = Get-ItemProperty $key
+          Write-Host "OK: ARP registered - $($p.DisplayName) $($p.DisplayVersion)"
+          # winget correlation via the manifest's ProductCode (informational).
+          winget list --id SmallBlackHole.FoundryDevPack --disable-interactivity 2>&1 | Out-Host
+          winget uninstall --silent --disable-interactivity --id SmallBlackHole.FoundryDevPack 2>&1 | Out-Host
+          if (Test-Path $key) {
+            Write-Host "winget did not clear ARP; invoking the UninstallString directly"
+            cmd /c ((Get-ItemProperty $key).UninstallString)
+          }
+          Start-Sleep -Seconds 5
+          if (Test-Path $key) { throw "ARP entry still present after uninstall" }
+          Write-Host "OK: uninstall removed the ARP entry"
 
       # --- cleanup (mac) ---
       - name: "Uninstall + zap (mac)"
